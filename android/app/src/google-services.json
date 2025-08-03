@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "347511442078",
+    "project_id": "smartshoppingcart-e285d",
+    "storage_bucket": "smartshoppingcart-e285d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:347511442078:android:39852d7a9584092296c98f",
+        "android_client_info": {
+          "package_name": "com.ansh.shopper"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDu0a9jXZlSCfbzYSRlMD5eAEvboVdJg3E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
