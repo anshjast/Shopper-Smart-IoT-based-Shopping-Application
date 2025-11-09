@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'scanner.dart';
+import 'home_dashboard.dart'; // Correctly imports the dashboard
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -16,6 +16,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> login() async {
     if (_formKey.currentState!.validate()) {
@@ -33,12 +40,19 @@ class _LoginScreenState extends State<LoginScreen> {
             .get();
 
         if (userDoc.exists) {
-          String username = userDoc['username'];
+          // Explicitly cast userDoc.data() to Map<String, dynamic>
+          Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
+          String username = data['username'] ?? 'User'; // Handle potential null username
+          String uid = userCred.user!.uid;
 
+          // Navigate to the HomeDashboard
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (_) => ScannerScreen(username: username),
+              builder: (_) => HomeDashboard(
+                username: username,
+                uid: uid,
+              ),
             ),
           );
         } else {
@@ -68,14 +82,14 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               TextFormField(
                 controller: _emailController,
-                decoration: InputDecoration(labelText: "Email"),
+                decoration: const InputDecoration(labelText: "Email"),
                 validator: (value) => value!.isEmpty ? "Enter email" : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _passwordController,
                 obscureText: true,
-                decoration: InputDecoration(labelText: "Password"),
+                decoration: const InputDecoration(labelText: "Password"),
                 validator: (value) => value!.isEmpty ? "Enter password" : null,
               ),
               const SizedBox(height: 32),

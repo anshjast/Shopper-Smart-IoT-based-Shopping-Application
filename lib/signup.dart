@@ -18,33 +18,46 @@ class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
 
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> signup() async {
     if (_formKey.currentState!.validate()) {
       try {
         setState(() => _loading = true);
 
-        // Sign up user
+        // 1. Sign up user
         UserCredential userCred = await FirebaseAuth.instance
             .createUserWithEmailAndPassword(
           email: _emailController.text.trim(),
           password: _passwordController.text.trim(),
         );
 
-        // Save username to Firestore
+        String uid = userCred.user!.uid;
+        String username = _usernameController.text.trim();
+
+        // 2. Save user data to Firestore
         await FirebaseFirestore.instance
             .collection('users')
-            .doc(userCred.user!.uid)
+            .doc(uid)
             .set({
-          'username': _usernameController.text.trim(),
+          'username': username,
           'email': _emailController.text.trim(),
+          'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // Navigate to ScannerScreen
+        // 3. Navigate, passing REQUIRED uid and username
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (_) => ScannerScreen(
-              username: _usernameController.text.trim(),
+              username: username,
+              uid: uid,
             ),
           ),
         );
@@ -62,7 +75,8 @@ class _SignupScreenState extends State<SignupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text("Sign Up", style: GoogleFonts.poppins())),
-      body: Padding(
+      // FIX: Wrap Column with SingleChildScrollView to prevent overflow
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Form(
           key: _formKey,
@@ -70,20 +84,20 @@ class _SignupScreenState extends State<SignupScreen> {
             children: [
               TextFormField(
                 controller: _usernameController,
-                decoration: InputDecoration(labelText: "Username"),
+                decoration: const InputDecoration(labelText: "Username"),
                 validator: (value) => value!.isEmpty ? "Enter username" : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _emailController,
-                decoration: InputDecoration(labelText: "Email"),
+                decoration: const InputDecoration(labelText: "Email"),
                 validator: (value) => value!.isEmpty ? "Enter email" : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _passwordController,
                 obscureText: true,
-                decoration: InputDecoration(labelText: "Password"),
+                decoration: const InputDecoration(labelText: "Password"),
                 validator: (value) => value!.length < 6 ? "Min 6 chars" : null,
               ),
               const SizedBox(height: 32),

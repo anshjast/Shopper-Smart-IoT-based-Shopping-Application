@@ -9,9 +9,10 @@ class WelcomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Welcome"),
+        title: const Text("Welcome to Shopper"), // Added app name
         centerTitle: true,
-        backgroundColor: Colors.deepPurple,
+        backgroundColor: Theme.of(context).primaryColor, // Use theme color
+        foregroundColor: Colors.white,
       ),
       body: Center(
         child: Column(
@@ -24,7 +25,10 @@ class WelcomeScreen extends StatelessWidget {
                   MaterialPageRoute(builder: (context) => const LoginScreen()),
                 );
               },
-              child: const Text("Login"),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+              ),
+              child: const Text("Login", style: TextStyle(fontSize: 18)),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
@@ -34,7 +38,10 @@ class WelcomeScreen extends StatelessWidget {
                   MaterialPageRoute(builder: (context) => const SignupScreen()),
                 );
               },
-              child: const Text("Sign Up"),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+              child: const Text("Sign Up", style: TextStyle(fontSize: 18)),
             ),
           ],
         ),

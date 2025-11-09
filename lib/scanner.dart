@@ -1,205 +1,303 @@
 import 'package:flutter/material.dart';
-import 'package:barcode_scan2/barcode_scan2.dart';
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'cart.dart';
+import 'main.dart'; // FIX: Import main.dart to access global 'cameras'
+
+// --- UTILITY: YUV420 to RGB Image Conversion ---
+img.Image? convertYUV420ToImage(CameraImage cameraImage) {
+  final int width = cameraImage.width;
+  final int height = cameraImage.height;
+  final int uvRowStride = cameraImage.planes[1].bytesPerRow;
+  final int uvPixelStride = cameraImage.planes[1].bytesPerPixel ?? 1;
+
+  final image = img.Image(width: width, height: height);
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final int uvIndex = uvRowStride * (y ~/ 2) + uvPixelStride * (x ~/ 2);
+      final int index = y * width + x;
+
+      final yValue = cameraImage.planes[0].bytes[index];
+      final uValue = cameraImage.planes[1].bytes[uvIndex];
+      final vValue = cameraImage.planes[2].bytes[uvIndex];
+
+      int r = (yValue + 1.370705 * (vValue - 128)).round();
+      int g = (yValue - 0.337633 * (uValue - 128) - 0.698001 * (vValue - 128)).round();
+      int b = (yValue + 1.732446 * (uValue - 128)).round();
+
+      r = r.clamp(0, 255);
+      g = g.clamp(0, 255);
+      b = b.clamp(0, 255);
+
+      image.setPixelRgb(x, y, r, g, b);
+    }
+  }
+  return image;
+}
+
+// --- TFLite Model Input Preparation ---
+Uint8List imageToByteList(img.Image image, int inputSize) {
+  final resizedImage = img.copyResize(image, width: inputSize, height: inputSize);
+  final floatList = Float32List(1 * inputSize * inputSize * 3);
+  int pixelIndex = 0;
+
+  for (int y = 0; y < inputSize; y++) {
+    for (int x = 0; x < inputSize; x++) {
+      final pixel = resizedImage.getPixel(x, y);
+
+      floatList[pixelIndex++] = (pixel.r / 255.0);
+      floatList[pixelIndex++] = (pixel.g / 255.0);
+      floatList[pixelIndex++] = (pixel.b / 255.0);
+    }
+  }
+  return floatList.buffer.asUint8List();
+}
+
+
+// --- MAIN SCANNER WIDGET ---
 
 class ScannerScreen extends StatefulWidget {
   final String username;
+  final String uid;
 
-  const ScannerScreen({Key? key, required this.username}) : super(key: key);
+  const ScannerScreen({Key? key, required this.username, required this.uid}) : super(key: key);
 
   @override
   _ScannerScreenState createState() => _ScannerScreenState();
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  List<Map<String, dynamic>> cartItems = [];
+  // Model Setup
+  Interpreter? _interpreter;
+  List<String>? _labels;
+  final int _inputSize = 224;
+  final double _confidenceThreshold = 0.85;
+  final String _modelPath = 'assets/shopper_model.tflite';
+  final String _labelsPath = 'assets/labels.txt';
 
-  // Helper method to safely convert price to double
-  double _convertToDouble(dynamic value) {
-    if (value == null) return 0.0;
-    if (value is int) return value.toDouble();
-    if (value is double) return value;
-    return double.tryParse(value.toString()) ?? 0.0;
+  // Camera & State Setup
+  CameraController? _cameraController;
+  bool _isCameraInitialized = false;
+  bool _isDetecting = false;
+  String _currentProductName = "Point camera at item...";
+  double _currentConfidence = 0.0;
+
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
   }
 
-  // Format price with INR symbol
-  String _formatPrice(dynamic price) {
-    double amount = _convertToDouble(price);
-    return '₹${amount.toStringAsFixed(2)}';
+  Future<void> _initialize() async {
+    // 1. Load model and labels
+    await _loadModelAndLabels();
+
+    // 2. Initialize Camera (Uses the global 'cameras' list from main.dart)
+    if (cameras.isEmpty) {
+      print("FATAL: No cameras available.");
+      _isCameraInitialized = false;
+      return;
+    }
+
+    _cameraController = CameraController(
+      cameras.first,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+
+    _cameraController!.initialize().then((_) {
+      if (!mounted) return;
+      _isCameraInitialized = true;
+      setState(() {});
+
+      // 3. Start processing the image stream
+      _cameraController!.startImageStream(_processCameraImage);
+    });
   }
 
-  Future<void> scanBarcode() async {
+  Future<void> _loadModelAndLabels() async {
     try {
-      var result = await BarcodeScanner.scan();
-      if (result.rawContent.isNotEmpty) {
-        final doc = await FirebaseFirestore.instance
-            .collection('products')
-            .doc(result.rawContent)
-            .get();
-
-        if (doc.exists) {
-          final data = doc.data()!;
-          final index = cartItems.indexWhere((item) => item['id'] == doc.id);
-
-          if (index >= 0) {
-            setState(() {
-              // Ensure quantity is handled as an integer
-              cartItems[index]['quantity'] = (cartItems[index]['quantity'] as int) + 1;
-            });
-          } else {
-            setState(() {
-              cartItems.add({
-                'id': doc.id,
-                'name': data['name'] ?? 'Unknown Product',
-                // Convert price to double regardless of its original type
-                'price': _convertToDouble(data['price']),
-                'quantity': 1,
-              });
-            });
-          }
-
-          // Show success message
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Added ${data['name'] ?? 'Product'} to cart'),
-              duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Product not found'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
+      _interpreter = await Interpreter.fromAsset(_modelPath);
+      final labelFile = await DefaultAssetBundle.of(context).loadString(_labelsPath);
+      _labels = labelFile.split('\n').where((l) => l.isNotEmpty).toList();
+      print("Model loaded successfully. Input Shape: ${_interpreter?.getInputTensor(0).shape}");
     } catch (e) {
-      print("Scan error: $e");
+      // FIX: Catch the model loading error but allow the app to run (AI Offline mode)
+      print("FATAL: Failed to load model or labels: $e. Using fallback mode.");
+      _currentProductName = "AI Offline - Tap to Scan";
+      _interpreter = null;
+    }
+  }
+
+  void _processCameraImage(CameraImage image) async {
+    if (!_isCameraInitialized || _interpreter == null || _isDetecting) return;
+
+    _isDetecting = true;
+
+    final img.Image? preprocessedImage = await Future.microtask(() {
+      return convertYUV420ToImage(image);
+    });
+
+    if (preprocessedImage != null) {
+      _runInference(preprocessedImage);
+    } else {
+      _isDetecting = false;
+    }
+  }
+
+  Future<void> _runInference(img.Image image) async {
+    if (_interpreter == null) {
+      _isDetecting = false;
+      return;
+    }
+
+    final inputBytes = imageToByteList(image, _inputSize);
+    final output = List.filled(_labels!.length, 0.0).reshape([1, _labels!.length]);
+
+    _interpreter!.run(inputBytes, output);
+
+    double maxConfidence = 0.0;
+    int predictedIndex = -1;
+
+    for (int i = 0; i < output[0].length; i++) {
+      if (output[0][i] > maxConfidence) {
+        maxConfidence = output[0][i];
+        predictedIndex = i;
+      }
+    }
+
+    if (predictedIndex != -1 && maxConfidence > _currentConfidence) {
+      setState(() {
+        _currentProductName = _labels![predictedIndex];
+        _currentConfidence = maxConfidence;
+      });
+    } else if (maxConfidence < 0.2) {
+      setState(() {
+        _currentProductName = "Searching for product...";
+        _currentConfidence = maxConfidence;
+      });
+    }
+
+    _isDetecting = false;
+  }
+
+  Future<void> _addItemToCart(String productName) async {
+    String productId = productName.replaceAll(' ', '_').toLowerCase();
+    final cartRef = _firestore.collection('carts').doc(widget.uid);
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        DocumentSnapshot cartSnapshot = await transaction.get(cartRef);
+
+        Map<String, dynamic> cartData = cartSnapshot.exists ? cartSnapshot.data() as Map<String, dynamic> : {
+          'items': [],
+          'createdAt': FieldValue.serverTimestamp(),
+          'userId': widget.uid,
+        };
+
+        List items = cartData['items'] ?? [];
+        int existingIndex = items.indexWhere((item) => item['productId'] == productId);
+
+        if (existingIndex != -1) {
+          items[existingIndex]['quantity'] += 1;
+        } else {
+          items.add({
+            'productId': productId,
+            'name': productName,
+            'quantity': 1,
+            'scan_confidence': _currentConfidence,
+            'addedAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        transaction.set(cartRef, cartData);
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error scanning: ${e.toString().split(":").first}'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('$productName added to cart!')),
+      );
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add item: $e')),
       );
     }
   }
 
-  void goToCart() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CartScreen(
-          cartItems: cartItems,
-          username: widget.username,
-        ),
-      ),
-    ).then((value) {
-      setState(() {});
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Scan Products", style: GoogleFonts.poppins()),
-        backgroundColor: Colors.deepPurple,
-        actions: [
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.shopping_cart),
-                onPressed: goToCart,
-              ),
-              if (cartItems.isNotEmpty)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      '${cartItems.length}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Product scanning section
-          Center(
-            child: ElevatedButton.icon(
-              onPressed: scanBarcode,
-              icon: const Icon(Icons.qr_code),
-              label: const Text("Scan Product"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                textStyle: GoogleFonts.poppins(fontSize: 18),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
+    if (!_isCameraInitialized || _cameraController == null) {
+      return Scaffold(
+        body: Center(child: Text(_currentProductName, style: const TextStyle(fontSize: 18))),
+      );
+    }
 
-          // Display cart status
-          if (cartItems.isNotEmpty)
-            Text(
-              "${cartItems.length} items in cart",
-              style: GoogleFonts.poppins(fontSize: 16),
+    final size = MediaQuery.of(context).size;
+    final scale = size.aspectRatio * _cameraController!.value.aspectRatio;
+
+    return Scaffold(
+      appBar: AppBar(title: Text("AI Scanner - User: ${widget.username}")),
+      body: Stack(
+        children: [
+          // Camera Preview
+          Transform.scale(
+            scale: scale,
+            child: Center(
+              child: CameraPreview(_cameraController!),
             ),
-          if (cartItems.isNotEmpty) ...[
-            const SizedBox(height: 30),
-            const Text(
-              "Recently Added:",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
+          ),
+
+          // Overlay for the AI result
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              color: Colors.black54,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    cartItems.last['name'] ?? 'Unknown',
-                    style: const TextStyle(fontSize: 16),
+                    _currentProductName,
+                    style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    _formatPrice(cartItems.last['price']),
-                    style: const TextStyle(fontSize: 16),
+                    "Confidence: ${_currentConfidence > 0.0 ? (_currentConfidence * 100).toStringAsFixed(2) + '%' : '---'}",
+                    style: const TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton.icon(
+                    onPressed: _currentConfidence >= _confidenceThreshold
+                        ? () {
+                      _addItemToCart(_currentProductName);
+
+                      setState(() {
+                        _currentProductName = "Point camera at next item...";
+                        _currentConfidence = 0.0;
+                      });
+                    }
+                        : null,
+                    icon: const Icon(Icons.add_shopping_cart),
+                    label: const Text("Add to Cart"),
                   ),
                 ],
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.stopImageStream();
+    _cameraController?.dispose();
+    _interpreter?.close();
+    super.dispose();
   }
 }
