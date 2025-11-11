@@ -29,7 +29,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
     try {
       final transactionData = await _checkoutService.createTransaction(widget.uid);
       final String txnId = transactionData['txn_id'];
-      // Ensure total_amount is parsed as double safely
       final double totalAmount = (transactionData['total_amount'] as num).toDouble();
 
       if (!mounted) return;
@@ -81,7 +80,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           ),
         ],
       ),
-      // FIX: Wrap the body's Center with a SingleChildScrollView
+      // FIX: Wrap the body's content with a SingleChildScrollView
       body: SingleChildScrollView(
         child: Center(
           child: Padding(
@@ -130,14 +129,14 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   icon: Icons.history,
                   label: 'View Past Receipts',
                   color: Colors.blueGrey,
-                  onPressed: () { /* TODO */ },
+                  onPressed: () { /* TODO: Implement navigation to receipt history */ },
                 ),
                 const SizedBox(height: 20),
                 _FeatureButton(
                   icon: Icons.inventory_2,
                   label: 'Manage Home Inventory',
                   color: Colors.orange.shade700,
-                  onPressed: () { /* TODO */ },
+                  onPressed: () { /* TODO: Implement Inventory feature */ },
                 ),
               ],
             ),
