@@ -29,6 +29,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     try {
       final transactionData = await _checkoutService.createTransaction(widget.uid);
       final String txnId = transactionData['txn_id'];
+      // Ensure total_amount is parsed as double safely
       final double totalAmount = (transactionData['total_amount'] as num).toDouble();
 
       if (!mounted) return;
@@ -80,6 +81,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           ),
         ],
       ),
+      // FIX: Wrap the body's Center with a SingleChildScrollView
       body: SingleChildScrollView(
         child: Center(
           child: Padding(
