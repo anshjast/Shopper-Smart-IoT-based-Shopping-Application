@@ -4,10 +4,9 @@ import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'main.dart';
+import 'main.dart'; // CRITICAL FIX: Import main.dart to access the global 'cameras' variable
 
-// The global list of available cameras, populated before runApp()
-late List<CameraDescription> cameras;
+// REMOVED: The redundant 'late List<CameraDescription> cameras;' declaration that was causing the crash
 
 // --- UTILITY: YUV420 to RGB Image Conversion ---
 img.Image? convertYUV420ToImage(CameraImage cameraImage) {
@@ -43,7 +42,7 @@ img.Image? convertYUV420ToImage(CameraImage cameraImage) {
 
 // --- TFLite Model Input Preparation ---
 Uint8List imageToByteList(img.Image image, int inputSize) {
-  final resizedImage = img.copyResize(image, width: inputSize, height: inputSize);
+  final resizedImage = img.copyResize(image, width: inputSize, height: inputSize );
   final floatList = Float32List(1 * inputSize * inputSize * 3);
   int pixelIndex = 0;
 
@@ -99,9 +98,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Future<void> _initialize() async {
     await _loadModelAndLabels();
 
+    // CRITICAL FIX: This now uses the 'cameras' list from main.dart
     if (cameras.isEmpty) {
       print("FATAL: No cameras available.");
-      _isCameraInitialized = false;
+      setState(() {
+        _isCameraInitialized = false;
+        _currentProductName = "Error: No cameras found.";
+      });
       return;
     }
 
@@ -128,7 +131,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
       print("Model loaded successfully. Input Shape: ${_interpreter?.getInputTensor(0).shape}");
     } catch (e) {
       print("FATAL: Failed to load model or labels: $e. Using fallback mode.");
-      _currentProductName = "AI Offline - Tap to Scan";
+      setState(() {
+        _currentProductName = "AI Model Error. Using fallback.";
+      });
       _interpreter = null;
     }
   }
@@ -156,6 +161,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     final inputBytes = imageToByteList(image, _inputSize);
+    // Ensure labels are loaded before running inference
+    if (_labels == null) {
+      _isDetecting = false;
+      return;
+    }
     final output = List.filled(_labels!.length, 0.0).reshape([1, _labels!.length]);
 
     _interpreter!.run(inputBytes, output);
@@ -170,38 +180,36 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
     }
 
-    // --- FIX: Clean up AI Output Display ---
     String rawPrediction = "Unknown";
     if (predictedIndex != -1 && predictedIndex < _labels!.length) {
       rawPrediction = _labels![predictedIndex];
     }
 
-    // Regex to remove any leading index (e.g., "2 Coca-Cola Can" -> "Coca-Cola Can")
     final name = rawPrediction.replaceFirst(RegExp(r'^\d+\s*'), '');
 
-    // Only update state if the detection is new and better
     if (predictedIndex != -1 && maxConfidence > _currentConfidence) {
-      setState(() {
-        _currentProductName = name; // Use cleaned name
-        _currentConfidence = maxConfidence;
-      });
-    } else if (maxConfidence < 0.2) { // Reset if confidence drops
-      setState(() {
-        _currentProductName = "Searching for product...";
-        _currentConfidence = maxConfidence;
-      });
+      if(mounted) {
+        setState(() {
+          _currentProductName = name;
+          _currentConfidence = maxConfidence;
+        });
+      }
+    } else if (maxConfidence < 0.2) {
+      if(mounted) {
+        setState(() {
+          _currentProductName = "Searching for product...";
+          _currentConfidence = maxConfidence;
+        });
+      }
     }
 
     _isDetecting = false;
   }
 
-  // --- FINAL FIX: Update Add to Cart Logic with specific Firestore IDs ---
   Future<void> _addItemToCart(String productName) async {
 
-    // 1. Determine the EXACT Firestore Document ID based on the cleaned product name.
     final String firestoreDocId;
 
-    // This switch maps the AI's output string to your exact Document ID
     switch (productName) {
       case "Coca-Cola Can":
         firestoreDocId = "CocaColaCan";
@@ -219,7 +227,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return;
     }
 
-    // 2. Fetch the product details from the 'products' collection
     final productDoc = await _firestore.collection('products').doc(firestoreDocId).get();
 
     if (!productDoc.exists) {
@@ -231,17 +238,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     final productData = productDoc.data()!;
 
-    // 3. Safely read the price and weight, handling different capitalizations
-    // We cast to 'num' first, then 'toDouble()' to handle both int and double
     final double price = (productData['Price'] as num? ?? 0.0).toDouble();
-
-    // Handle both "Weight" and "weight"
     final double weight = (productData['Weight'] as num? ?? productData['weight'] as num? ?? 0.0).toDouble();
-
-    // The name saved in Firestore is the "official" name
     final String savedName = productData['Name'] ?? productName;
 
-    // 4. Reference the user's cart subcollection
     final cartItemRef = _firestore.collection('carts').doc(widget.uid).collection('items').doc(firestoreDocId);
 
     try {
@@ -253,13 +253,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
           currentQuantity = (cartSnapshot.data() as Map<String, dynamic>)['quantity'] ?? 0;
         }
 
-        // 5. Set the item data (updates if exists, creates if new)
         transaction.set(cartItemRef, {
           'productId': firestoreDocId,
           'name': savedName,
           'price': price,
           'weight_grams': weight,
-          'quantity': currentQuantity + 1, // Increment quantity
+          'quantity': currentQuantity + 1,
           'scan_confidence': _currentConfidence,
           'addedAt': FieldValue.serverTimestamp(),
         });
@@ -281,26 +280,31 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Widget build(BuildContext context) {
     if (!_isCameraInitialized || _cameraController == null) {
       return Scaffold(
+        appBar: AppBar(title: Text("AI Scanner - User: ${widget.username}")),
         body: Center(child: Text(_currentProductName, style: const TextStyle(fontSize: 18))),
       );
     }
 
     final size = MediaQuery.of(context).size;
+    // Ensure controller is initialized before accessing value
+    if (!_cameraController!.value.isInitialized) {
+      return Scaffold(
+        appBar: AppBar(title: Text("AI Scanner - User: ${widget.username}")),
+        body: const Center(child: Text("Camera not initialized...", style: TextStyle(fontSize: 18))),
+      );
+    }
     final scale = size.aspectRatio * _cameraController!.value.aspectRatio;
 
     return Scaffold(
       appBar: AppBar(title: Text("AI Scanner - User: ${widget.username}")),
       body: Stack(
         children: [
-          // Camera Preview
           Transform.scale(
             scale: scale,
             child: Center(
               child: CameraPreview(_cameraController!),
             ),
           ),
-
-          // Overlay for the AI result
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
@@ -310,7 +314,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _currentProductName, // Uses cleaned name
+                    _currentProductName,
                     style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
                   ),
                   Text(
@@ -324,12 +328,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       _addItemToCart(_currentProductName);
 
                       setState(() {
-                        // Display success message until next scan begins
                         _currentProductName = "Item added! Scan next...";
                         _currentConfidence = 0.0;
                       });
                     }
-                        : null, // Disable if confidence is low or product is "Background"
+                        : null,
                     icon: const Icon(Icons.add_shopping_cart),
                     label: const Text("Add to Cart"),
                   ),

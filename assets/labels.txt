@@ -1,4 +1,4 @@
- Coca-Cola Can
- KitKat Chocolate
- Lays Chile Lemon Chips
- Empty
+0 empty
+1 Lays Chile Lemon Chips
+2 Coca-Cola Can
+3 KitKat Chocolate

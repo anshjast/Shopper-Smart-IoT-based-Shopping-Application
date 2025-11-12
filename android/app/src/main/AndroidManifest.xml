@@ -1,15 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- Permissions -->
-    <!-- Camera permission for barcode scanning -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Internet permission for UPI payments -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- External storage permissions might be needed for some payment apps -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
     <!-- Features -->
-    <!-- Make camera optional -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
@@ -20,6 +16,16 @@
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:usesCleartextTraffic="true">
+
+        <!--
+          FIX: Add this meta-data tag.
+          This disables the Impeller (Vulkan) rendering engine on Android,
+          which fixes the "Invalid external texture" camera crash.
+        -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -44,13 +50,10 @@
 
     <!-- Queries section for both text processing and UPI payment apps -->
     <queries>
-        <!-- Existing query for text processing -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
-
-        <!-- Added query for UPI payment apps with expanded scheme support -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="upi" />
@@ -67,8 +70,6 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="paytm" />
         </intent>
-
-        <!-- For specific UPI apps visibility -->
         <package android:name="com.google.android.apps.nbu.paisa.user" /> <!-- Google Pay -->
         <package android:name="net.one97.paytm" /> <!-- Paytm -->
         <package android:name="com.phonepe.app" /> <!-- PhonePe -->
