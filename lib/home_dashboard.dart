@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // New import
 import 'package:shopper/payment.dart';
 import 'scanner.dart';
 import 'cart.dart';
@@ -21,18 +22,40 @@ class HomeDashboard extends StatefulWidget {
 
 class _HomeDashboardState extends State<HomeDashboard> {
   final SecureCheckoutService _checkoutService = SecureCheckoutService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // Use Firestore directly
   bool _isCheckingOut = false;
 
   void _initiateSecureCheckout() async {
     setState(() => _isCheckingOut = true);
 
     try {
-      final transactionData = await _checkoutService.createTransaction(widget.uid);
+      // 1. Get items directly from the subcollection (one-time read)
+      final itemsSnapshot = await _firestore.collection('carts').doc(widget.uid).collection('items').get();
+
+      if (itemsSnapshot.docs.isEmpty) {
+        throw Exception('Your cart is empty.');
+      }
+
+      // 2. Map documents to a list of Maps (required by JSON payload)
+      final List<Map<String, dynamic>> itemsList = itemsSnapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'productId': data['productId'],
+          'name': data['name'],
+          'price': (data['price'] as num).toDouble(),
+          'weight_grams': (data['weight_grams'] as num).toDouble(),
+          'quantity': (data['quantity'] as int).toInt(),
+        };
+      }).toList();
+
+      // 3. Call the service, passing the items list directly (FIX)
+      final transactionData = await _checkoutService.createTransaction(widget.uid, itemsList);
+
       final String txnId = transactionData['txn_id'];
       final double totalAmount = (transactionData['total_amount'] as num).toDouble();
 
       if (!mounted) return;
-      Navigator.push(
+      Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (context) => PaymentScreen(
@@ -46,7 +69,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Checkout Failed: $e')),
+        SnackBar(content: Text('Checkout Failed: ${e.toString()}')),
       );
     } finally {
       if (mounted) {
@@ -80,8 +103,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           ),
         ],
       ),
-      // FIX: Wrap the body's content with a SingleChildScrollView
-      body: SingleChildScrollView(
+      body: SingleChildScrollView( // FIX: Prevents UI overflow
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(24.0),
@@ -96,6 +118,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
                 const SizedBox(height: 30),
 
+                // --- 1. Scan Products ---
                 _FeatureButton(
                   icon: Icons.camera_alt,
                   label: 'Scan Products (AI Scanner)',
@@ -111,6 +134,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
                 const SizedBox(height: 20),
 
+                // --- 2. Checkout Action ---
                 _FeatureButton(
                   icon: Icons.payment,
                   label: 'Checkout & Pay Securely',
@@ -129,14 +153,14 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   icon: Icons.history,
                   label: 'View Past Receipts',
                   color: Colors.blueGrey,
-                  onPressed: () { /* TODO: Implement navigation to receipt history */ },
+                  onPressed: () { /* TODO */ },
                 ),
                 const SizedBox(height: 20),
                 _FeatureButton(
                   icon: Icons.inventory_2,
                   label: 'Manage Home Inventory',
                   color: Colors.orange.shade700,
-                  onPressed: () { /* TODO: Implement Inventory feature */ },
+                  onPressed: () { /* TODO */ },
                 ),
               ],
             ),

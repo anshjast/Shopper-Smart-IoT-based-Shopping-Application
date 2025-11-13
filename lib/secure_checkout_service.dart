@@ -4,40 +4,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class SecureCheckoutService {
-  // IMPORTANT: Ensure this is set correctly (10.0.2.2 for emulator)
-  final String _backendUrl = 'http://10.0.2.2:5000';
+  final String _backendUrl = '[http://10.0.2.2:5000](http://10.0.2.2:5000)';
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  Future<Map<String, dynamic>> createTransaction(String uid) async {
-    // 1. CRITICAL FIX: Query the 'items' SUBCOLLECTION, not the parent document.
-    final itemsSnapshot = await _firestore.collection('carts').doc(uid).collection('items').get();
+  Future<Map<String, dynamic>> createTransaction(String uid, List<Map<String, dynamic>> itemsList) async {
 
-    if (itemsSnapshot.docs.isEmpty) {
+    if (itemsList.isEmpty) {
       throw Exception('Your cart is empty.');
     }
 
-    // 2. Map the documents into a simple list of item data
-    final List<Map<String, dynamic>> itemsList = itemsSnapshot.docs.map((doc) {
-      // Ensure we convert data types safely for JSON transfer
-      final data = doc.data();
-      return {
-        'productId': data['productId'],
-        'name': data['name'],
-        'price': (data['price'] as num).toDouble(),
-        'weight_grams': (data['weight_grams'] as num).toDouble(),
-        'quantity': (data['quantity'] as int).toInt(),
-      };
-    }).toList();
-
-    // 3. Get the user's Firebase auth token
     final idToken = await _auth.currentUser?.getIdToken(true);
     if (idToken == null) {
       throw Exception('User not authenticated.');
     }
 
-    // 4. Call the Python backend's '/create_transaction' endpoint
     final response = await http.post(
       Uri.parse('$_backendUrl/create_transaction'),
       headers: {
@@ -46,13 +28,14 @@ class SecureCheckoutService {
       },
       body: jsonEncode({
         'userId': uid,
-        'items': itemsList, // Send the list of cart items
+        'items': itemsList,
       }),
     );
 
     if (response.statusCode == 200) {
-      // Clear the user's cart immediately after a successful transaction request
-      for (var doc in itemsSnapshot.docs) {
+      final cartItemsRef = _firestore.collection('carts').doc(uid).collection('items');
+      final snapshot = await cartItemsRef.get();
+      for (var doc in snapshot.docs) {
         await doc.reference.delete();
       }
       return jsonDecode(response.body);
@@ -61,7 +44,6 @@ class SecureCheckoutService {
     }
   }
 
-  // --- (finalizeTransaction function remains the same) ---
   Future<String> finalizeTransaction(String txnId) async {
     final idToken = await _auth.currentUser?.getIdToken(true);
 
